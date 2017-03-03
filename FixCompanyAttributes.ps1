@@ -72,6 +72,15 @@ PARAM
 
     $Result = $SMSDisc.DDRWrite($DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
     $TestFile = Get-Item -LiteralPath  ($DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
+    If ($TestFile) { 
+        Log-Append -strLogFileName $LogFileName  -strLogText ("Created DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUniqueIdentifier+".DDR")
+        Return "Success" 
+    }
+    ELSE {
+        Log-Append -strLogFileName $LogFileName  -strLogText ("Failed to create DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUniqueIdentifier+".DDR")
+        Return "Failed" 
+    }
+
     Return $TestFile
 }
 
@@ -157,8 +166,10 @@ $ADDPROP_NAME  = 0x44
 
 
 #Define environment specific  variables
-$LoggingFolder      = "C:\TEMP\FixCompanyAttributes\"
-$DDRTempFolder = ($LoggingFolder+"TempDDRs\")
+$ScriptPath         = $PSScriptRoot
+$DDRTargetFolder    = "\D$\SCCMServer\inboxes\auth\ddm.box\"   #must include trailing \
+$DDRTempFolder      = ($ScriptPath+"\TempDDRs\")
+$LoggingFolder      = ($ScriptPath+"\Logs\")
 $ExtDiscDBName = "SCCM_EXT"
 $DomainsTableName = "tbl_ExtDiscDomains"
 $LoggingTableName   = "tbl_ExtDiscLogging"
@@ -168,9 +179,9 @@ $InactivityDate = (Get-Date).Adddays(-($DaysInactive))
 
 # Set parameter defaults
 $PassedParams =  (" -SiteServer "+$SiteServer+" -SiteCode "+$SiteCode+" -SQLServer "+$SQLServer+" -InstanceName "+$InstanceName)
-If (!$SiteServer)   { $SiteServer   = "XSNW10S629K"                   }
-If (!$SiteCode)     { $SiteCode     = "F01"                           }
-If (!$InstanceName) { $InstanceName = "FixCompanyAttributes"    }
+If (!$SiteServer)   { $SiteServer   = "GISSSCCMDEV2"              }
+If (!$SiteCode)     { $SiteCode     = "T00"                       }
+If (!$InstanceName) { $InstanceName = "FixCompanyAttributes-DEV"  }
 
 # Lookup the SCCM site definition to populate global variables
 $objSiteDefinition = Get-WmiObject -ComputerName $SiteServer -Namespace ("root\sms\Site_"+$SiteCode) -Query ("SELECT * FROM sms_sci_sitedefinition WHERE SiteCode = '"+$SiteCode+"'")
@@ -196,14 +207,19 @@ $SCCMComputers = @()
 Log-Append -strLogFileName $LogFileName -strLogText ("Script Started using command line parameters : "+$PassedParams )
 Log-Append -strLogFileName $LogFileName -strLogText ("The actual values being used are : -SiteServer "+$SiteServer+" -SiteCode "+$SiteCode+" -SQLServer "+$SQLServer+" -InstanceName "+$InstanceName)
 
+
 #Load the SCCM SDK DLL
 Log-Append -strLogFileName $LogFileName -strLogText ("Creating an instance of the com object SMSResGen.SMSResGen.1" )
+$SMSDisc = New-Object -ComObject "SMSResGen.SMSResGen.1" 
 If (!$SMSDisc) {
-    Try { &regsvr32 /s ($DDRTempFolder+"\OldDLLs\smsrsgen.dll")
+    Try { 
+        &regsvr32 /s ($ScriptPath+"\SCCMSDKDLLs\OldDLLs\smsrsgen.dll") 
+        &regsvr32 /s ($ScriptPath+"\SCCMSDKDLLs\OldDLLs\smsrsgenctl.dll") 
         $SMSDisc = New-Object -ComObject "SMSResGen.SMSResGen.1" }
     Catch { 
         Try {
-            &regsvr32 /s ($DDRTempFolder+"\NewDLLs\smsrsgen.dll")
+            &regsvr32 /s ($ScriptPath+"\SCCMSDKDLLs\NewDLLs\smsrsgen.dll") 
+            &regsvr32 /s ($ScriptPath+"\SCCMSDKDLLs\NewDLLs\smsrsgenctl.dll") 
             $SMSDisc = New-Object -ComObject "SMSResGen.SMSResGen.1" 
         }
         Catch { Log-Append -strLogFileName $LogFileName -strLogText "Failed to load COM object SMSResGen.SMSResGen.1" }
@@ -231,7 +247,7 @@ ForEach ($objDomain in $objADDomains ) {
     # Iterate through the list of computers from AD and see if SCCM has a matching record
     # If the company attributes for the SCCM record does not match AD then write an SCCM DDR with the AD information
     ForEach ($ADComputer in $ADComputers) { 
-        Log-Append -strLogFileName $LogFileName -strLogText  ("Checking SCCM for a computer named "+$ADComputer.Name)
+        #Log-Append -strLogFileName $LogFileName -strLogText  ("Checking SCCM for a computer named "+$ADComputer.Name)
         $FoundMatch = $False 
         $SCCMComputers = Get-SCCMComputer  -SQLServer $SQLServer -SCCMDBName $SCCMDBName -ComputerName $ADComputer.Name -DistinguishedName $ADComputer.DistinguishedName
         Foreach ( $SCCMComputer in $SCCMComputers) {  
@@ -246,7 +262,7 @@ ForEach ($objDomain in $objADDomains ) {
 
             # Check to see if the CompanyAttributeMachineCategory value does not match
             If ( $SCCMComputer.CompanyAttributeMachineCa0 -ne $ADComputer.CompanyAttributeMachineCategory ) { 
-                Log-Append -strLogFileName $LogFileName -strLogText ("SCCM Machine Category("+$SCCMComputer.CompanyAttributeMachineCa0+") does not match AD value("+$ADComputer.companyAttributeMachineCategory+")")
+                Log-Append -strLogFileName $LogFileName -strLogText ("SCCM Computer "+$SCCMComputer.Netbios_Name0+" Machine Category does not match AD value")
                 If ( ($SCCMComputer.CompanyAttributeMachineTy0 -ne $ADComputer.CompanyAttributeMachineType) -AND $ADComputer.CompanyAttributeMachineType -eq $Null ) {
                     $ADComputer.CompanyAttributeMachineType = ''
                 }
@@ -258,28 +274,20 @@ ForEach ($objDomain in $objADDomains ) {
                 If ($SCCMComputer.SMS_Assigned_Sites0.ToString().length -eq 3 ) {
                     $UseSiteCode =  $SCCMComputer.SMS_Assigned_Sites0
                 } ELSE { $UseSiteCode = $SiteCode }
-                Log-Append -strLogFileName $LogFileName -strLogText ("Found "+$SCCMComputer.NetBios_Name0+" in SCCM whose data does not match AD")
-                Log-Append -strLogFileName $LogFileName -strLogText ("Creating DDR:"+$DDRTempFolder+$UseSiteCode+"-"+$SCCMComputer.NetBios_Name0+"-"+$SCCMComputer.SMS_Unique_Identifier0+".ddr")
-                Log-Append -strLogFileName $LogFileName -strLogText ("- SiteCode: "+$UseSiteCode)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- DDR NetBiosName: "+$SCCMComputer.NetBios_Name0)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- DDR SMSUniqueIdentifier: "+$SCCMComputer.SMS_Unique_Identifier0)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- DDR DistinguishedName: "+$ADComputer.DistinguishedName)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- DDR Category: "+$ADComputer.CompanyAttributeMachineCategory)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- DDR Type: "+$ADComputer.CompanyAttributeMachineType)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- Old SCCM Category: "+$SCCMComputer.CompanyAttributeMachineCa0)
-                Log-Append -strLogFileName $LogFileName -strLogText ("- Old SCCM Type: "+$SCCMComputer.CompanyAttributeMachineTy0)
-
+                #Log-Append -strLogFileName $LogFileName -strLogText ("Found "+$SCCMComputer.NetBios_Name0+" in SCCM whose data does not match AD")
                 $DDRFile = Create-DDR  -SiteCode $UseSiteCode -ResourceID  $SCCMComputer.ResourceID -NetBiosName $SCCMComputer.NetBios_Name0 -SMSUniqueIdentifier $SCCMComputer.SMS_Unique_Identifier0  -DistinguishedName  $ADComputer.DistinguishedName -Category  $ADComputer.CompanyAttributeMachineCategory  -Type $ADComputer.CompanyAttributeMachineType 
                 $LogResult = Log-SQLDDRChange -SQLServer $SQLServer -ExtDiscDBName $ExtDiscDBName -LoggingTableName $LoggingTableName -ComputerName $ADComputer.name -AD_DN $ADComputer.DistinguishedName -AD_Category $ADComputer.companyAttributeMachineCategory -AD_Type $ADComputer.companyAttributeMachineType -SCCM_DN $SCCMComputer.Distinguished_Name0 -SCCM_Category $SCCMComputer.companyAttributeMachineCa0 -SCCM_Type $SCCMComputer.companyAttributeMachineTy0 -SMSClientGUID $SCCMComputer.SMS_Unique_Identifier0 -SCCM_SiteCode $SCCMComputer.SMS_Assigned_Sites0 
-                If ($DDRFile) { Log-Append -strLogFileName $LogFileName  -strLogText ("Created DDR "+$DDRFile.FullName) }
-                ELSE          { Log-Append -strLogFileName $LogFileName  -strLogText ("Failed to create DDR") }
+                #If ($DDRFile) { Log-Append -strLogFileName $LogFileName  -strLogText ("Created DDR "+$DDRFile.FullName) }
+                #ELSE          { Log-Append -strLogFileName $LogFileName  -strLogText ("Failed to create DDR") }
             } 
-            ELSE { Log-Append -strLogFileName $LogFileName -strLogText ("Found "+$ADComputer.Name+" in SCCM and data matches AD, nothing to do") }
+            ELSE { 
+                #Log-Append -strLogFileName $LogFileName -strLogText ("Found "+$ADComputer.Name+" in SCCM and data matches AD, nothing to do") 
+            }
         }
     }
 }
 
-    
+
 $objDDRsToMove = @()
 ForEach ( $SCCMSite in $objSMSSites ) {
     $objDDRsToMove = Get-ChildItem -Path ($DDRTempFolder+$SCCMSite.SiteCode+"*.ddr")   
