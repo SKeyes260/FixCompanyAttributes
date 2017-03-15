@@ -58,31 +58,30 @@ PARAM
     If (($SMSUniqueIdentifier) -AND ($SMSUniqueIdentifier -NE '')  -AND ($SMSUniqueIdentifier -NE ' '))  {
         If ($SMSUniqueIdentifier.length -ge 36) { 
             $SMSUID = $SMSUniqueIdentifier.substring($SMSUniqueIdentifier.length - 36, 36)
-            $SMSDisc.DDRAddString("SMS Unique Identifier", $SMSUniqueIdentifier, 64,  $ADDPROP_GUID + $ADDPROP_KEY)
+            $SMSDisc.DDRAddString("SMS Unique Identifier", ($SMSUniqueIdentifier), 64,  $ADDPROP_GUID + $ADDPROP_KEY)
          } 
          ELSE { 
              $SMSUID = "NOGUID"  
          }
     }
-
-    If ($NetBiosName       -AND $NetBiosName         -NE $Null) { $SMSDisc.DDRAddString("Netbios Name", $NetBiosName, 16,  $ADDPROP_NAME + $ADDPROP_KEY) } 
-    If ($DistinguishedName -AND $DistinguishedName   -NE $Null) { $SMSDisc.DDRAddString("Distinguished Name", $DistinguishedName,  256, $ADDPROP_NONE)  }
-    If ( $Category -NE $Null) { $SMSDisc.DDRAddString("companyAttributeMachineCategory",  $Category, 32,  $ADDPROP_NONE)  }
-    If ( $Type     -NE $Null) { $SMSDisc.DDRAddString("companyAttributeMachineType",      $Type, 32,  $ADDPROP_NONE)  }
+        
+    $SMSDisc.DDRAddString("Netbios Name",                                        $NetBiosName,         16,  $ADDPROP_NAME + $ADDPROP_KEY)  
+    $SMSDisc.DDRAddString("Distinguished Name",                                  $DistinguishedName,   256, $ADDPROP_NONE)  
+    If ( $Category ) { $SMSDisc.DDRAddString("companyAttributeMachineCategory",  $Category,            32,  $ADDPROP_NONE)  }
+    If ( $Type )     { $SMSDisc.DDRAddString("companyAttributeMachineType",      $Type,                32,  $ADDPROP_NONE)  }
 
     $Result = $SMSDisc.DDRWrite($DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
     $TestFile = Get-Item -LiteralPath  ($DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
     If ($TestFile) { 
-        Log-Append -strLogFileName $LogFileName  -strLogText ("Created DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUniqueIdentifier+".DDR")
+        Log-Append -strLogFileName $LogFileName  -strLogText ("Created DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
         Return "Success" 
     }
     ELSE {
-        Log-Append -strLogFileName $LogFileName  -strLogText ("Failed to create DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUniqueIdentifier+".DDR")
+        Log-Append -strLogFileName $LogFileName  -strLogText ("Failed to create DDR "+$DDRTempFolder+$SiteCode+"-"+$NetBiosName+"-"+$SMSUID+".DDR")
         Return "Failed" 
     }
-
-    Return $TestFile
 }
+
 
 
 Function Log-Append () {
@@ -179,9 +178,9 @@ $InactivityDate = (Get-Date).Adddays(-($DaysInactive))
 
 # Set parameter defaults
 $PassedParams =  (" -SiteServer "+$SiteServer+" -SiteCode "+$SiteCode+" -SQLServer "+$SQLServer+" -InstanceName "+$InstanceName)
-If (!$SiteServer)   { $SiteServer   = "GISSSCCMDEV2"              }
-If (!$SiteCode)     { $SiteCode     = "T00"                       }
-If (!$InstanceName) { $InstanceName = "FixCompanyAttributes-DEV"  }
+If (!$SiteServer)   { $SiteServer   = "XSNW10W142C"              }
+If (!$SiteCode)     { $SiteCode     = "PP0"                       }
+If (!$InstanceName) { $InstanceName = "FixCompanyAttributes-PREPROD"  }
 
 # Lookup the SCCM site definition to populate global variables
 $objSiteDefinition = Get-WmiObject -ComputerName $SiteServer -Namespace ("root\sms\Site_"+$SiteCode) -Query ("SELECT * FROM sms_sci_sitedefinition WHERE SiteCode = '"+$SiteCode+"'")
